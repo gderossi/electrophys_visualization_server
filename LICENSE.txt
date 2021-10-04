@@ -1,3 +1,5 @@
+Copyright 2021 Grayson Derossi <graysonderossi@gmail.com>
+
 Copyright 2021 Chris Derossi <chris@makermusings.com>
 
 Copyright 2013-2015 Dave Jones <dave@waveform.org.uk>
