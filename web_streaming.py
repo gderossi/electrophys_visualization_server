@@ -2,7 +2,9 @@
 
 # Derived from:
 # https://github.com/waveform80/picamera/blob/release-1.13/docs/examples/web_streaming.py
-# 
+#
+# Copyright 2021 Grayson Derossi <graysonderossi@gmail.com>
+#
 # Copyright 2021 Chris Derossi <chris@makermusings.com>
 # 
 # Copyright 2013-2015 Dave Jones <dave@waveform.org.uk>
@@ -33,16 +35,17 @@
 
 
 import io
-import picamera
+import cv2
 import logging
 import socketserver
 from threading import Condition
 from http import server
+from PIL import Image
 
 PAGE="""\
 <html>
 <head>
-<title>picamera MJPEG streaming demo</title>
+<title>Electrophys MJPEG streaming demo</title>
 <style>
     body {
         background-color: #094b86;
@@ -161,7 +164,7 @@ PAGE="""\
                 document.getElementById('container').classList.add('width1024')
             }
             setTimeout(() => {
-                videoImg.src = "stream" + resolution + ".mjpg"
+                videoImg.src = "videoStream.mjpg"
             }, 100)
         }
     }
@@ -169,7 +172,7 @@ PAGE="""\
 </head>
 <body>
     <div id="container" class="container">
-        <img id="video" class="camvideo" src="stream640.mjpg" />
+        <img id="video" class="camvideo" src="videoStream.mjpg" />
         <div class="controls">
             <label for="resolution">Resolution:</label>
             <select id="resolution" onchange="changeResolution()">
@@ -235,12 +238,21 @@ class StreamingHandler(server.BaseHTTPRequestHandler):
                 with self.output.condition:
                     self.output.condition.wait()
                     frame = self.output.frame
+
+                ret, frame = self.camera.read()
+                if not ret:
+                    break
+                frameRGB = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
+                tmpFile = io.BytesIO()
+                jpg = Image.fromarray(frameRGB)
+                jpg.save(tmpFile, 'JPEG')
+                buffer = tmpFile.getvalue()
                 self.wfile.write(b'--FRAME\r\n')
                 self.send_header('Content-Type', 'image/jpeg')
-                self.send_header('Content-Length', len(frame))
+                self.send_header('Content-Length', str(len(buffer)))
                 self.end_headers()
-                self.wfile.write(frame)
-                self.wfile.write(b'\r\n')
+                self.wfile.write(buffer)
+                cv2.waitKey(1)
         except Exception as e:
             self.camera.stop_recording()
             self.camera.close()
@@ -260,12 +272,12 @@ class StreamingHandler(server.BaseHTTPRequestHandler):
             self.send_header('Content-Length', len(content))
             self.end_headers()
             self.wfile.write(content)
-        elif self.path == '/stream640.mjpg':
+        elif self.path == '/videoStream.mjpg':
             self.output = StreamingOutput()
-            self.camera = picamera.PiCamera(resolution='640x480', framerate=24)
-            self.camera.start_recording(self.output, format='mjpeg')
+            self.camera = cv2.VideoCapture(0)
+            #self.camera.start_recording(self.output, format='mjpeg')
             self.stream_common()
-        elif self.path == '/stream1024.mjpg':
+        elif self.path == '/dataStream.mjpg':
             self.output = StreamingOutput()
             self.camera = picamera.PiCamera(resolution='1024x768', framerate=24)
             self.camera.start_recording(self.output, format='mjpeg')
