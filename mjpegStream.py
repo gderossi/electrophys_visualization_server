@@ -59,10 +59,17 @@ PAGE="""
 	max-width: 960px;
 	width: 100%;
     }
+
+    .controls {
+        margin: auto;
+        margin-top: 10px;
+        display: flex;
+        justify-content: center;
+    }
     
 </style>
 <script>
-    var channel = "a-010"
+    var channel = "a-000"
     
     function changeChannel()
     {
@@ -86,7 +93,7 @@ PAGE="""
     <div>
     	<img src="cam.mjpg" class="camera"/>
     </div>
-    <img src="a-010_data.mjpg" id="data" class="data"/>
+    <img src="a-000_data.mjpg" id="data" class="data"/>
 </div>
 <div class="controls">
     <label for="channels">Channel:</label>
@@ -159,35 +166,36 @@ class CamHandler(server.BaseHTTPRequestHandler):
             channel = self.path[-15:-10]
             selectChannel(bytes(channel, "utf-8"))
             channel = channel.capitalize()
-            #plt.clf()
+            plt.cla()
             self.send_response(200)
             self.send_header('Content-Type','multipart/x-mixed-replace; boundary=--jpgboundary')
             self.end_headers()
             while True:
-                try:
-                    dataTmpFile = io.BytesIO()
-                    timestamps = []
-                    data = []
-                    ReadWaveformData(timestamps, data)
-                    min_time = int(timestamps[0] / TIME_RANGE) * TIME_RANGE
-                    max_time = min_time + TIME_RANGE
-                    data = lfilter(b, a, data)
-                    plt.plot(timestamps, data, color='blue')
-                    plt.title(channel + ' Amplifier Data')
-                    plt.xlabel('Time (s)')
-                    plt.ylabel('Voltage (uV)')
-                    plt.xlim([min_time, max_time])
-                    plt.savefig(dataTmpFile, format='jpg')
-                    buffer = dataTmpFile.getvalue()
-                    self.wfile.write(b'--jpgboundary\r\n')
-                    self.send_header('Content-Type','image/jpeg')
-                    self.send_header('Content-Length',str(len(buffer)))
-                    self.end_headers()
-                    self.wfile.write(buffer)
-                    cv2.waitKey(1)
-                except KeyboardInterrupt:
-                    #print(e)
-                    break
+                if waveformChannelActive:
+                    try:
+                        dataTmpFile = io.BytesIO()
+                        timestamps = []
+                        data = []
+                        ReadWaveformData(timestamps, data)
+                        min_time = int(timestamps[0] / TIME_RANGE) * TIME_RANGE
+                        max_time = min_time + TIME_RANGE
+                        data = lfilter(b, a, data)
+                        plt.plot(timestamps, data, color='blue')
+                        plt.title(channel + ' Amplifier Data')
+                        plt.xlabel('Time (s)')
+                        plt.ylabel('Voltage (uV)')
+                        plt.xlim([min_time, max_time])
+                        plt.savefig(dataTmpFile, format='jpg')
+                        buffer = dataTmpFile.getvalue()
+                        self.wfile.write(b'--jpgboundary\r\n')
+                        self.send_header('Content-Type','image/jpeg')
+                        self.send_header('Content-Length',str(len(buffer)))
+                        self.end_headers()
+                        self.wfile.write(buffer)
+                        cv2.waitKey(1)
+                    except KeyboardInterrupt:
+                        #print(e)
+                        break
             return
         if self.path.endswith('.html'):
             content = PAGE.encode('utf-8')
@@ -221,14 +229,16 @@ def readUint16(array, arrayIndex):
     return variable, arrayIndex
 
 def selectChannel(channel):
+    global waveformChannelActive
     # Clear TCP data output to ensure no TCP channels are enabled
+    waveformChannelActive = False
     scommand.sendall(b'execute clearalldataoutputs')
-    time.sleep(0.1)
 
     # Send TCP commands to set up TCP Data Output Enabled for wide
-    # band of channel A-010
+    # band of channel
     scommand.sendall(b'set ' + channel + b'.tcpdataoutputenabled true')
-    time.sleep(0.1)
+    waveformChannelActive = True
+    
 
 def ReadWaveformData(timestamps, data):
     # Calculations for accurate parsing
@@ -245,24 +255,36 @@ def ReadWaveformData(timestamps, data):
 
     # Read waveform data
     rawData = swaveform.recv(WAVEFORM_BUFFER_SIZE)
-    if len(rawData) % waveformBytesPerBlock != 0:
-        raise Exception('An unexpected amount of data arrived that is not an integer multiple of the expected data size per block')
-    numBlocks = int(len(rawData) / waveformBytesPerBlock)
 
-    rawIndex = 0 # Index used to read the raw data that came in through the TCP socket
-    #amplifierTimestamps = [] # List used to contain scaled timestamp values in seconds
-    #amplifierData = [] # List used to contain scaled amplifier data in microVolts
+    magicNumber = 0
+    rawIndex = 0  # Index used to read the raw data that came in through the TCP socket
+    
+    while True:
+        magicNumber, rawIndex = readUint32(rawData, rawIndex)
+        if magicNumber == 0x2ef07a08:
+            break
+        rawIndex -= 3
+    
+    rawIndex -= 4 
+
+    numBlocks = int((len(rawData) - rawIndex)/ waveformBytesPerBlock)
 
     for block in range(numBlocks):
         # Expect 4 bytes to be TCP Magic Number as uint32.
         # If not what's expected, raise an exception.
         magicNumber, rawIndex = readUint32(rawData, rawIndex)
         if magicNumber != 0x2ef07a08:
-            raise Exception('Error... magic number incorrect')
+            rawIndex += (waveformBytesPerBlock - 4)
+            if rawIndex >= len(rawData):
+                break
+            continue
 
         # Each block should contain 128 frames of data - process each
         # of these one-by-one
         for frame in range(framesPerBlock):
+            if len(rawData) - rawIndex < 6:
+                return
+            
             # Expect 4 bytes to be timestamp as int32.
             rawTimestamp, rawIndex = readInt32(rawData, rawIndex)
 
@@ -312,7 +334,7 @@ def main():
     # Calculate timestep from sample rate
     timestep = 1 / sampleRate
         
-    selectChannel(b'a-010')
+    selectChannel(b'a-000')
 
     plt.rcParams['figure.figsize'] = [9.6, 4.8]
     
