@@ -1,6 +1,8 @@
 #!/usr/bin/env python3
 
 import cv2
+import matplotlib
+matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 from scipy.signal import butter, lfilter
 from PIL import Image
@@ -12,6 +14,7 @@ import time
 import socket
 
 capture=None
+previousMinTime = 0
 
 # Declare buffer size for reading from TCP command socket
 COMMAND_BUFFER_SIZE = 1024
@@ -25,7 +28,7 @@ LOW_CUTOFF = 300
 HIGH_CUTOFF = 7000
 
 #Data plot settings
-TIME_RANGE = 30 #seconds
+TIME_RANGE = 20 #seconds
 
 PAGE="""
 <html>
@@ -138,6 +141,7 @@ PAGE="""
 
 class CamHandler(server.BaseHTTPRequestHandler):
     def do_GET(self):
+        global previousMinTime
         if self.path.endswith('cam.mjpg'):
             self.send_response(200)
             self.send_header('Content-Type','multipart/x-mixed-replace; boundary=--jpgboundary')
@@ -178,6 +182,9 @@ class CamHandler(server.BaseHTTPRequestHandler):
                         data = []
                         ReadWaveformData(timestamps, data)
                         min_time = int(timestamps[0] / TIME_RANGE) * TIME_RANGE
+                        if min_time > previousMinTime:
+                            previousMinTime = min_time
+                            plt.cla()
                         max_time = min_time + TIME_RANGE
                         data = lfilter(b, a, data)
                         plt.plot(timestamps, data, color='blue')
@@ -232,11 +239,12 @@ def selectChannel(channel):
     global waveformChannelActive
     # Clear TCP data output to ensure no TCP channels are enabled
     waveformChannelActive = False
-    scommand.sendall(b'execute clearalldataoutputs')
-
+    scommand.sendall(b'execute clearalldataoutputs\r')
+    time.sleep(0.1)
     # Send TCP commands to set up TCP Data Output Enabled for wide
     # band of channel
-    scommand.sendall(b'set ' + channel + b'.tcpdataoutputenabled true')
+    scommand.sendall(b'set ' + channel + b'.tcpdataoutputenabled true\r')
+    time.sleep(0.1)
     waveformChannelActive = True
     
 
@@ -268,7 +276,7 @@ def ReadWaveformData(timestamps, data):
     rawIndex -= 4 
 
     numBlocks = int((len(rawData) - rawIndex)/ waveformBytesPerBlock)
-
+    
     for block in range(numBlocks):
         # Expect 4 bytes to be TCP Magic Number as uint32.
         # If not what's expected, raise an exception.
@@ -299,7 +307,7 @@ def ReadWaveformData(timestamps, data):
 
 def main():
     global capture
-    capture = cv2.VideoCapture(0)
+    capture = cv2.VideoCapture(1)
     global img
     global scommand
     global swaveform
